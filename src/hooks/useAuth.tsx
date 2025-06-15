@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, User } from '../lib/supabase';
 import { User as SupabaseUser } from '@supabase/supabase-js';
-import { User } from '../lib/supabase';
 import { toast } from '../components/ui/toaster';
 
 interface AuthContextType {
@@ -53,25 +52,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
 
       if (error) {
-        // If user doesn't exist in profiles table, create one
+        // If user doesn't exist in users table, they should be created by the trigger
+        // But let's handle the case where it might not exist yet
         if (error.code === 'PGRST116') {
-          const newUser: Partial<User> = {
-            id: authUser.id,
-            email: authUser.email!,
-            name: authUser.user_metadata?.name || authUser.email!.split('@')[0],
-            username: authUser.user_metadata?.username || authUser.email!.split('@')[0],
-            verified: false,
-            role: 'user',
-          };
-
-          const { data: createdUser, error: createError } = await supabase
-            .from('users')
-            .insert([newUser])
-            .select()
-            .single();
-
-          if (createError) throw createError;
-          setUser(createdUser);
+          // Wait a bit and try again (trigger might be processing)
+          setTimeout(async () => {
+            const { data: retryData, error: retryError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', authUser.id)
+              .single();
+            
+            if (retryError) {
+              console.error('Error fetching user profile after retry:', retryError);
+              toast.error('Kullanıcı profili yüklenirken hata oluştu');
+            } else {
+              setUser(retryData);
+            }
+            setLoading(false);
+          }, 1000);
+          return;
         } else {
           throw error;
         }
@@ -131,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) throw error;
-      toast.success('Hesabınız oluşturuldu! E-posta adresinizi doğrulayın.');
+      toast.success('Hesabınız oluşturuldu! Giriş yapabilirsiniz.');
     } catch (error: any) {
       toast.error(error.message || 'Kayıt olurken hata oluştu');
       throw error;
